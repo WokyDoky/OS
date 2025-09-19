@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <string.h> // Required for strerror
+#include <stdlib.h>
 
 // Forward declarations
 int str_len(const char *str);
@@ -277,70 +278,172 @@ int print_tail(int fd_list[], char *file_names[], int fd_count, int n) {
     return 0; // Success
 }
 
-int main(int argc, char *argv[]){
+#define MAX_LINE_LENGTH 4096 // Define a reasonable max line length
+
+/**
+ * @brief Prints the last n lines from a non-seekable file descriptor (like stdin).
+ * Uses a circular buffer to store the last n lines in memory.
+ * @param fd The file descriptor to read from.
+ * @param n The number of lines to print.
+ * @return 0 on success, -1 on failure.
+ */
+int tail_non_seekable(int fd, int n) {
+    if (n <= 0) {
+        return 0; // Nothing to do
+    }
+
+    // Bufffer
+    char **lines = (char **)malloc(n * sizeof(char *));
+    if (lines == NULL) {
+        write_string(STDERR_FILENO, "Error: malloc failed for line pointers\n");
+        return -1;
+    }
+    for (int i = 0; i < n; i++) {
+        lines[i] = (char *)malloc(MAX_LINE_LENGTH);
+        if (lines[i] == NULL) {
+            write_string(STDERR_FILENO, "Error: malloc failed for a line buffer\n");
+            // Free previously allocated memory before exiting
+            for (int j = 0; j < i; j++) free(lines[j]);
+            free(lines);
+            return -1;
+        }
+        lines[i][0] = '\0'; // Initialize as empty string
+    }
+
+    // --- 2. Read input and fill the buffer ---
+    char buffer[BUFFER_SIZE];
+    ssize_t bytes_read;
+    int current_line_idx = 0;
+    int current_char_idx = 0;
+    int total_lines_read = 0;
+
+    while ((bytes_read = read(fd, buffer, BUFFER_SIZE)) > 0) {
+        for (ssize_t i = 0; i < bytes_read; i++) {
+            if (buffer[i] == '\n') {
+                lines[current_line_idx][current_char_idx] = '\0'; // Null-terminate the line
+                total_lines_read++;
+                current_line_idx = (current_line_idx + 1) % n; // Move to the next slot
+                current_char_idx = 0; // Reset for the new line
+            } else {
+                if (current_char_idx < MAX_LINE_LENGTH - 1) {
+                    lines[current_line_idx][current_char_idx++] = buffer[i];
+                }
+                // If line exceeds MAX_LINE_LENGTH, characters are ignored.
+            }
+        }
+    }
+    // Null-terminate the very last line if the file doesn't end with a newline
+    lines[current_line_idx][current_char_idx] = '\0';
+    if(current_char_idx > 0) {
+        total_lines_read++;
+    }
+
+
+    // --- 3. Print the lines from the buffer in order ---
+    int start_index;
+    int lines_to_print;
+
+    if (total_lines_read < n) {
+        start_index = 0;
+        lines_to_print = total_lines_read;
+    } else {
+        start_index = current_line_idx;
+        lines_to_print = n;
+    }
+
+    for (int i = 0; i < lines_to_print; i++) {
+        int index_to_print = (start_index + i) % n;
+        if (str_len(lines[index_to_print]) > 0 || (total_lines_read > 1 && i < lines_to_print -1) || (total_lines_read == 1 && lines_to_print == 1) ) {
+             write_string(STDOUT_FILENO, lines[index_to_print]);
+             write_string(STDOUT_FILENO, "\n");
+        }
+    }
+
+
+    // --- 4. Free all allocated memory ---
+    for (int i = 0; i < n; i++) {
+        free(lines[i]);
+    }
+    free(lines);
+
+    return 0;
+}
+
+int main(int argc, char *argv[]) {
     // Default to 10 lines
     int lines_to_print = 10;
 
-    // Arrays to store actual filenames and their file descriptors
+    // Array to store actual filenames
     char *files_to_open[argc];
     int file_count = 0;
 
-    if (argc > 1 && compareStrings(argv[1], "--help")){
+    if (argc > 1 && compareStrings(argv[1], "--help")) {
         help();
         return 0;
     }
 
-
     // --- Argument Parsing ---
-    for (int i = 1; i < argc; i++){
-        if (compareStrings(argv[i], "-n")){
-            if (i + 1 < argc && isNumber(argv[i+1])){
-                lines_to_print = argument_to_int(argv[i+1]);
-                i++;
-            }
-            else{
+    for (int i = 1; i < argc; i++) {
+        if (compareStrings(argv[i], "-n")) {
+            if (i + 1 < argc && isNumber(argv[i + 1])) {
+                lines_to_print = argument_to_int(argv[i + 1]);
+                i++; // Also consume the number argument
+            } else {
                 write_string(STDERR_FILENO, "tail: option requires an argument -- 'n'\n");
                 return 1;
             }
-        } else{
-            // It's not a flag we recognize, so treat it as a filename
+        } else {
+            // It's not a flag, so treat it as a filename
             files_to_open[file_count] = argv[i];
             file_count++;
         }
     }
 
-    // --- Execution  ---
-    int fd_list[file_count];
-    int opened_files_count = 0;
-
-    if (file_count == 0){
-        // No files provided, read from standard input
-        fd_list[0] = STDIN_FILENO; // STDIN_FILENO is 0
-        char *stdin_name[] = {"standard input"};
-        opened_files_count = 1;
-        // Tail on stdin is a more complex problem (can't seek),
-        // this implementation will read the whole stream.
-        // For this exercise, we'll assume it's a pipe from a file.
-        print_tail(fd_list, stdin_name, opened_files_count, lines_to_print);
-    } else{
-        for (int i = 0; i < file_count; i++){
+    // --- Execution (Revised Logic) ---
+    if (file_count == 0) {
+        // Case 1: No file arguments, read from stdin (which is non-seekable)
+        tail_non_seekable(STDIN_FILENO, lines_to_print);
+    } else {
+        // Case 2: One or more file arguments
+        for (int i = 0; i < file_count; i++) {
             int fd = open(files_to_open[i], O_RDONLY);
-            if (fd != -1){
-                fd_list[opened_files_count++] = fd;
-            } else {
-                // Report error opening a specific file
+
+            if (fd == -1) {
+                // Report error and skip to the next file
                 char *errMsg = strerror(errno);
                 write_string(STDERR_FILENO, "tail: cannot open '");
                 write_string(STDERR_FILENO, files_to_open[i]);
                 write_string(STDERR_FILENO, "' for reading: ");
                 write_string(STDERR_FILENO, errMsg);
                 write_string(STDERR_FILENO, "\n");
+                continue;
             }
-        }
 
-        if (opened_files_count > 0){
-            print_tail(fd_list, files_to_open, opened_files_count, lines_to_print);
-            close_files(fd_list, opened_files_count);
+            // If processing multiple files, print a separator and a header
+            if (file_count > 1) {
+                if (i > 0) {
+                    write_string(STDOUT_FILENO, "\n");
+                }
+                write_string(STDOUT_FILENO, "==> ");
+                write_string(STDOUT_FILENO, files_to_open[i]);
+                write_string(STDOUT_FILENO, " <==\n");
+            }
+
+            // Check if the file descriptor is seekable. A pipe will fail with errno = ESPIPE.
+            if (lseek(fd, 0, SEEK_CUR) == -1 && errno == ESPIPE) {
+                // The file is not seekable (it's a pipe or similar); use the buffering method.
+                tail_non_seekable(fd, lines_to_print);
+            } else {
+                // The file is seekable; use your original efficient method.
+                // We create temporary single-element arrays to pass to print_tail.
+                int temp_fd_list[1] = { fd };
+                char *temp_file_list[1] = { files_to_open[i] };
+
+                // By passing a count of 1, the header logic inside print_tail is correctly skipped.
+                print_tail(temp_fd_list, temp_file_list, 1, lines_to_print);
+            }
+
+            close(fd);
         }
     }
 

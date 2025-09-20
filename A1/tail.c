@@ -72,9 +72,9 @@ int compareStrings(char S1[], char S2[]){
 }
 
 /*
---------------
-PRINTING
---------------
+================================================================================
+                              PRINTING
+================================================================================
 */
 
 /**
@@ -85,8 +85,6 @@ PRINTING
  */
 void write_string(int fd, const char *str) {
     if (better_write(fd, str, str_len(str)) == -1) {
-        // If writing an error to stderr fails, there's nothing more we can do.
-        // If writing to stdout fails, we can at least try to report it.
         if (fd == STDOUT_FILENO) {
             const char *errMsg = "Error: Could not write to standard output.\n";
             better_write(STDERR_FILENO, errMsg, str_len(errMsg));
@@ -129,7 +127,7 @@ int better_write(int fd, const void *buf, size_t size) {
 }
 
 /**
- * Closes all open files in fd_list
+ * @brief all open files in fd_list
  */
 void close_files(int fd_list[], int count){
     for(int i = 0; i < count; i++){
@@ -164,14 +162,14 @@ int has_flag(int argc, char *argv[]){
     return 0;
 }
 /*
----
-Check arguments above this line
----
+================================================================================
+                        Check arguments above this line
+================================================================================
 */
 
 
 /**
- * Prints help
+ * @brief Prints help
  */
 void help (){
     write_string(STDOUT_FILENO, "Usage: tail [OPTION]... [FILE]...\n");
@@ -186,25 +184,43 @@ void help (){
 }
 
 /**
- * A helper function to handle write errors. Writing to stdout can fail
- * (e.g., if the pipe is broken), so we should check for it.
+ * @deprecated created for debuggin purposes. 
+ * @brief A helper function to handle write errors. No file descritors. 
  */
 void write_checked(const void *buf, size_t count) {
     if (write(STDOUT_FILENO, buf, count) == -1) {
         write_string(STDERR_FILENO, "Error writing to stdout\n");
-        // In a real utility, you might want to exit here.
     }
 }
 
 /*
--------------------
-TAIL
--------------------
+================================================================================
+                              TAIL
+================================================================================
 */
 
 #define BUFFER_SIZE 8192
-
+/**
+ * @brief Prints the last 'n' lines of one or more seekable files.
+ *
+ * @param fd_list      An array of integer file descriptors for the open files
+ * to be processed.
+ * @param file_names   An array of strings containing the names of the files,
+ * corresponding to the file descriptors in fd_list. Used
+ * for printing headers.
+ * @param fd_count     The total number of files to process (the size of the
+ * fd_list and file_names arrays).
+ * @param n            The number of lines to print from the end of each file.
+ *
+ * @return int         Returns 0 upon successful completion of all files.
+ * This implementation does not return an error code but
+ * prints errors to stderr and continues to the next file
+ * if one fails.
+ */
 int print_tail(int fd_list[], char *file_names[], int fd_count, int n) {
+    if (n <= 0) {
+        return 0; // Nothing to do
+    }
     for (int i = 0; i < fd_count; i++) {
         if (fd_count > 1) {
             if (i > 0) {
@@ -360,6 +376,7 @@ int tail_non_seekable(int fd, int n) {
     }
 
 
+    
     // --- 4. Free all allocated memory ---
     for (int i = 0; i < n; i++) {
         free(lines[i]);
@@ -399,9 +416,9 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // --- Execution (Revised Logic) ---
+    // --- Execution ---
     if (file_count == 0) {
-        // Case 1: No file arguments, read from stdin (which is non-seekable)
+        // Case 1: stdin,  non-seekable
         tail_non_seekable(STDIN_FILENO, lines_to_print);
     } else {
         // Case 2: One or more file arguments
@@ -431,15 +448,12 @@ int main(int argc, char *argv[]) {
 
             // Check if the file descriptor is seekable. A pipe will fail with errno = ESPIPE.
             if (lseek(fd, 0, SEEK_CUR) == -1 && errno == ESPIPE) {
-                // The file is not seekable (it's a pipe or similar); use the buffering method.
                 tail_non_seekable(fd, lines_to_print);
             } else {
-                // The file is seekable; use your original efficient method.
-                // We create temporary single-element arrays to pass to print_tail.
+                // The file is seekable
                 int temp_fd_list[1] = { fd };
                 char *temp_file_list[1] = { files_to_open[i] };
 
-                // By passing a count of 1, the header logic inside print_tail is correctly skipped.
                 print_tail(temp_fd_list, temp_file_list, 1, lines_to_print);
             }
 

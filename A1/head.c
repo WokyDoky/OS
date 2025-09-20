@@ -3,21 +3,10 @@
 #include <errno.h>  // For errno
 // #include <stdio.h>
 
-/**
- *  @return length of str. 
-*/
-int str_len(const char *str) {
-    int length = 0;
-    while (str && str[length]) {
-        length++;
-    }
-    return length;
-}
-
 /*
---------------
-PRINTING
---------------
+================================================================================
+                              PRINTING
+================================================================================
 */
 
 /**
@@ -51,6 +40,17 @@ int better_write(int fd, const void *buf, size_t size) {
     bytes_already_written += bytes_written_this_time;
   }
   return 0;
+}
+
+/**
+ *  @return length of str. 
+*/
+int str_len(const char *str) {
+    int length = 0;
+    while (str && str[length]) {
+        length++;
+    }
+    return length;
 }
 
 /**
@@ -141,7 +141,7 @@ int open_files_in_argument_vector(int argc, char *argv[], int fd_list[]){
 
 
 /**
- * Closes all open files in fd_list
+ * @brief Closes all open files in fd_list
  */
 void close_files(int fd_list[], int count){
     for(int i = 0; i < count; i++){
@@ -184,7 +184,7 @@ int has_flag(int argc, char *argv[]){
 }
 
 /**
- * Prints help text to standard output.
+ * @brief Prints help text to standard output.
  */
 void help (){
     print_to_fd(STDOUT_FILENO, "Usage: head [OPTION]... [FILE]...\nPrint the first 10 lines of each FILE to standard output.\nWith more than one FILE, precede each with a header giving the file name.\n\nWith no FILE, or when FILE is -, read standard input.\n");

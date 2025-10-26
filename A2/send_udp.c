@@ -109,6 +109,27 @@ int string_to_int(const char *num){
 int is_digit (char c){
     return (c >= '0' && c <= '9');
 }
+
+/**
+ * @brief Compares two strings, s1 and s2.
+ * * @param s1 The first null-terminated string.
+ * @param s2 The second null-terminated string.
+ * @return An integer less than, equal to, or greater than zero if s1 is found,
+ * respectively, to be less than, to match, or be greater than s2.
+ */
+int strcmp(const char *s1, const char *s2) {
+    // Method used for testing. 
+    while (*s1 && *s2) {
+        // If characters are different, stop and return the difference
+        if (*s1 != *s2) {
+            break; 
+        }
+        s1++;
+        s2++;
+    }
+    
+    return *(unsigned char*)s1 - *(unsigned char*)s2;
+}
 /* ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 ================================================================================
                             UTILITIES
@@ -199,7 +220,7 @@ static int open_udp_fd(const char *server_name, const char *port_name) {
 
   gai_code = getaddrinfo(server_name, port_name, &hints, &result);
   if (gai_code != 0) {
-    printf("getaddrinfo failed\n");
+    fprintf(stderr, "getaddrinfo failed: %s\n", gai_strerror(gai_code));
     return -1;
   }
 
@@ -233,50 +254,62 @@ static int open_udp_fd(const char *server_name, const char *port_name) {
   return fd;
 }
 
+/**
+ * @brief Displays usage information.
+ */
 void help (char **argv){
     fprintf(stderr, "Usage: %s <server_name> <port_name>\n", argv[0]);
 }
 
+
+/* 
+================================================================================
+                                    Main
+================================================================================
+*/
 int main(int argc, char **argv) {
     if (argc != 3){
         help(argv);
         exit(1);
     }
     
-    char* server_address = argv[1];
+    char* direccion_servidor = argv[1];
     char* port = argv[2];
 
-    if (!is_valid_ip(server_address) || !is_valid_port(port)){
+
+    if (!is_valid_port(port)){
         help(argv);
-        exit(0);
+        exit(1);
     }
 
-    int fd = open_udp_fd(server_address, port);
-    if (fd < 0) exit(1);
+    int fd = open_udp_fd(direccion_servidor, port); 
+    if (fd < 0) {
+        exit(1);
+    }
 
     char buffer[BUF_SIZE];
-    ssize_t bytes_read;
-    ssize_t bytes_sent;
+    ssize_t bytes_leidos;
+    ssize_t bytes_enviados;
     
-    while ((bytes_read = read(STDIN_FILENO, buffer, BUF_SIZE)) > 0){
-        bytes_sent = send(fd, buffer, bytes_read, 0);
-        if (bytes_sent < 0){
+    while ((bytes_leidos = read(STDIN_FILENO, buffer, BUF_SIZE)) > 0){
+        bytes_enviados = send(fd, buffer, bytes_leidos, 0);
+        if (bytes_enviados < 0){
             printf("Send failed\n");
             close(fd);
             exit(1);
         }
-        if (bytes_sent != bytes_read){
+        if (bytes_enviados != bytes_leidos){
             printf("Could not send the entire chunk\n");
             close(fd);
         }
     }
-    if (bytes_read < 0){
+    if (bytes_leidos < 0){
         printf("Reading failed\n");
         close(fd);
         exit(1);
     }
 
-    if (bytes_read==0){
+    if (bytes_leidos==0){
         if (send(fd, NULL, 0, 0) < 0){
             printf("EOF handling failed.\n");
             close(fd);

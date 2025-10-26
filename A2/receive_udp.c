@@ -145,7 +145,9 @@ static int convert_port_name(uint16_t *port, const char *port_name) {
 
     if (port_name == NULL) return -1;
     if (*port_name == '\0') return -1;
+
     nn = strtoll(port_name, &end, 0);
+    
     if (*end != '\0') return -1;
     if (nn < 0) return -1;
     t = (uint16_t) nn;
@@ -203,7 +205,7 @@ int driver (uint16_t port){
         }
     }
     close(socketfd);
-    print_to_fd(STDOUT_FILENO, "\nDebug EOF\n");
+    // print_to_fd(STDOUT_FILENO, "\nDebug EOF\n");
     return 0;
 }
 

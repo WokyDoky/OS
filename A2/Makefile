@@ -13,8 +13,8 @@ SOURCES = \
     receive_udp.c \
     reply_udp.c \
     send_receive_udp.c \
-    tunneludp_over_tcp_client.c \
-    tunneludp_over_tcp_server.c \
+    tunnel_udp_over_tcp_client.c \
+    tunnel_udp_over_tcp_server.c \
     udp_fec.c
 
 # contains all *possible* executables.

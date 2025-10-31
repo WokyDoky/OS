@@ -226,6 +226,7 @@ int main(int argc, char *argv[]) {
     unsigned char tcp_buffer[TCP_BUFFER_SIZE];
     unsigned char reconstruction_buffer[RECONSTRUCTION_BUFFER_SIZE];
     struct sockaddr_in udp_sender_addr;
+    int udp_sender_available = 0;
     size_t recon_index = 0; // Position in reconstruction buffer
     int in_header = 1;
     uint16_t expected_payload_len = 0;
@@ -290,6 +291,8 @@ int main(int argc, char *argv[]) {
                 continue;
             }
             
+            /* we now know where to send UDP replies to */
+            udp_sender_available = 1;
             
             /* Send over TCP with length header */
             if (send_udp_over_tcp(tcp_fd, udp_buffer, udp_recv_len) < 0) {
@@ -327,7 +330,10 @@ int main(int argc, char *argv[]) {
                         
                         if (expected_payload_len == 0) {
                             /* Empty message - send it out if we have a destination */
-                            sendto(udp_fd, reconstruction_buffer + 2, 0, 0, (struct sockaddr *)&udp_sender_addr, sizeof(udp_sender_addr));
+                            if (udp_sender_available) {
+                                sendto(udp_fd, reconstruction_buffer + 2, 0, 0, 
+                                    (struct sockaddr *)&udp_sender_addr, sizeof(udp_sender_addr));
+                            }
                             recon_index = 0;
                             in_header = 1;
                         } else {
@@ -338,7 +344,9 @@ int main(int argc, char *argv[]) {
                     /* Reading payload */
                     if ((uint16_t)recon_index == 2 + expected_payload_len) {
                         /* Message complete */
-                        sendto(udp_fd, reconstruction_buffer + 2, expected_payload_len, 0, (struct sockaddr *)&udp_sender_addr, sizeof(udp_sender_addr));
+                        if (udp_sender_available) {
+                            sendto(udp_fd, reconstruction_buffer + 2, expected_payload_len, 0, (struct sockaddr *)&udp_sender_addr, sizeof(udp_sender_addr));
+                        }
                         
                         /* Reset for next message */
                         recon_index = 0;

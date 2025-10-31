@@ -75,13 +75,89 @@ typedef struct {
 
 /*
 ================================================================================
-                            UTILITY FUNCTIONS
+                            UTILITY
 ================================================================================
 */
 
 /**
- * @author Professor Dr. Christoph Lauter, UTEP.
+ * @brief Ensures that a specified number of bytes are written to a file descriptor,
+ * handling partial writes by looping until all data is sent.
+ * * @author Professor Dr. Christoph Lauter, UTEP.
+ * @note This function was provided as part of the course materials for
+ * Operating Systems Concepts and is not original work.
+ * @param fd    The file descriptor to write to.
+ * @param buf   A pointer to the buffer containing the data.
+ * @param size  The total number of bytes to write.
+ * @return 0 on success, -1 on failure.
  */
+int better_write(int fd, const void *buf, size_t size) {
+  size_t bytes_to_write;
+  size_t bytes_already_written;
+  size_t bytes_written_this_time;
+  ssize_t res_write;
+
+  bytes_to_write = size;
+  bytes_already_written = (size_t) 0;
+  while (bytes_to_write > ((size_t) 0)) {
+    res_write = write(fd,
+		      &((const char *) buf)[bytes_already_written],
+		      bytes_to_write);
+    if (res_write < ((ssize_t) 0)) {
+      return -1;
+    }
+    bytes_written_this_time = (size_t) res_write;
+    bytes_to_write -= bytes_written_this_time;
+    bytes_already_written += bytes_written_this_time;
+  }
+  return 0;
+}
+/**
+ *  @return length of str. 
+*/
+int str_len(const char *str) {
+    int length = 0;
+    while (str && str[length]) {
+        length++;
+    }
+    return length;
+}
+
+/**
+ * @brief Writes a string to a given file descriptor using the write system call.
+ * @param fd The file descriptor to write to (e.g., STDOUT_FILENO, STDERR_FILENO).
+ * @param str The null-terminated string to write.
+ * @return 0 on success, -1 on failure.
+ */
+int print_to_fd(int fd, const char *str) {
+    return better_write(fd, str, str_len(str));
+}
+
+/**
+ ** @author Professor Dr. Christoph Lauter, UTEP.
+ * @note This function was provided as part of the course materials for
+ * Operating Systems Concepts and is not original work.
+ */
+
+ /**
+ * @brief Compares two strings, s1 and s2.
+ * * @param s1 The first null-terminated string.
+ * @param s2 The second null-terminated string.
+ * @return An integer less than, equal to, or greater than zero if s1 is found,
+ * respectively, to be less than, to match, or be greater than s2.
+ */
+int strcmp(const char *s1, const char *s2) {
+    // Method used for testing. 
+    while (*s1 && *s2) {
+        // If characters are different, stop and return the difference
+        if (*s1 != *s2) {
+            break; 
+        }
+        s1++;
+        s2++;
+    }
+    
+    return *(unsigned char*)s1 - *(unsigned char*)s2;
+}
 static int convert_port_name(uint16_t *port, const char *port_name) {
     char *end;
     long long int nn;
@@ -668,17 +744,16 @@ static int parse_int_arg(const char *arg, int min, int max, int *result) {
 */
 
 static void print_usage(const char *progname) {
-    fprintf(stderr, "Usage:\n");
-    fprintf(stderr, "  Client mode: %s -c <udp_port> <tcp_server_name> <tcp_port_name> "
-                    "<repetition_factor> <repetition_delay_ms> <reordering_delay_ms>\n", 
-                    progname);
-    fprintf(stderr, "  Server mode: %s -s <tcp_port> <udp_server_name> <udp_port_name> "
-                    "<repetition_factor> <repetition_delay_ms> <reordering_delay_ms>\n", 
-                    progname);
-    fprintf(stderr, "\n");
-    fprintf(stderr, "  repetition_factor: 0-7 (number of additional repetitions)\n");
-    fprintf(stderr, "  repetition_delay_ms: 0-1000 (milliseconds between repetitions)\n");
-    fprintf(stderr, "  reordering_delay_ms: 0-8000 (max milliseconds to wait for reordering)\n");
+    print_to_fd(STDOUT_FILENO, "Usage:\n");
+    print_to_fd(STDOUT_FILENO, "Client mode: ");
+    print_to_fd(STDOUT_FILENO, progname);
+    print_to_fd(STDOUT_FILENO, " -c <udp_port> <server_name> <tcp_port_name> <repetition_factor> <repetition_delay_ms> <reordering_delay_ms>\n");
+    print_to_fd(STDOUT_FILENO, "Server mode: ");
+    print_to_fd(STDOUT_FILENO, progname);
+    print_to_fd(STDOUT_FILENO, " -c <tcp_port> <server_name> <udp_port_name> <repetition_factor> <repetition_delay_ms> <reordering_delay_ms>\n\n");
+    print_to_fd(STDOUT_FILENO, "repetition_factor: 0-7\n");
+    print_to_fd(STDOUT_FILENO, "repetition_delay_ms: 0-1000 (ms)\n");
+    print_to_fd(STDOUT_FILENO, "reordering_delay_ms: 0-8000 (ms)\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -689,13 +764,11 @@ int main(int argc, char *argv[]) {
     const char *peer_port;
     int repetition_factor, repetition_delay, reordering_delay;
     
-    /* Check minimum arguments */
     if (argc < 8) {
         print_usage(argv[0]);
         return 1;
     }
     
-    /* Parse mode */
     if (strcmp(argv[1], "-c") == 0) {
         is_client = 1;
     } else if (strcmp(argv[1], "-s") == 0) {

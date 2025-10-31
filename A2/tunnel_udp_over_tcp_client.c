@@ -11,8 +11,15 @@
 #include <stdint.h>
 
 #define UDP_BUFFER_SIZE 65536
-#define TCP_BUFFER_SIZE 65538
-#define RECONSTRUCTION_BUFFER_SIZE 131076
+#define TCP_BUFFER_SIZE 65538 // UDP max + 2-byte header
+#define RECONSTRUCTION_BUFFER_SIZE 131076 // 2×TCP buffer
+
+/*
+================================================================================
+                            UTILITY
+================================================================================
+*/
+
 
 /**
  ** @author Professor Dr. Christoph Lauter, UTEP.
@@ -103,6 +110,21 @@ static int create_udp_socket(uint16_t port) {
     return sockfd;
 }
 
+// void debug_printer(unsigned char *str){
+//     int i = 0;
+//     while (str[i]){
+//         printf("%c\n", str[i]);
+//         i++;
+//     }
+//     printf("END\n");
+// }
+
+/*
+================================================================================
+                            PACKET HANDLING
+================================================================================
+*/
+
 /**
  * @brief Resolves server name, creates and connects a TCP socket.
  * @param server_name The FQDN or IP address of the server.
@@ -169,11 +191,10 @@ static int send_udp_over_tcp(int tcp_fd, const unsigned char *udp_data, size_t u
     uint16_t net_len;
     size_t total_len;
     
-    /* Create length header in network byte order */
+    /* Encapsulation */
     net_len = htons((uint16_t)udp_len);
     memcpy(message, &net_len, 2);
     
-    /* Copy UDP payload */
     if (udp_len > 0) {
         memcpy(message + 2, udp_data, udp_len);
     }
@@ -205,8 +226,7 @@ int main(int argc, char *argv[]) {
     unsigned char tcp_buffer[TCP_BUFFER_SIZE];
     unsigned char reconstruction_buffer[RECONSTRUCTION_BUFFER_SIZE];
     struct sockaddr_in udp_sender_addr;
-    int udp_sender_available = 0;
-    size_t recon_index = 0;
+    size_t recon_index = 0; // Position in reconstruction buffer
     int in_header = 1;
     uint16_t expected_payload_len = 0;
     fd_set readfds;
@@ -262,13 +282,14 @@ int main(int argc, char *argv[]) {
             socklen_t udp_sender_addr_len = sizeof(udp_sender_addr);
             ssize_t udp_recv_len = recvfrom(udp_fd, udp_buffer, UDP_BUFFER_SIZE, 0, (struct sockaddr *)&udp_sender_addr, &udp_sender_addr_len);
             
+            // DEBUG
+            // printf("DEBUG UDP: %s\n", udp_buffer);
+            // debug_printer(udp_buffer);
             if (udp_recv_len < 0) {
                 fprintf(stderr, "Error receiving UDP packet: %s\n", strerror(errno));
                 continue;
             }
             
-            /* we now know where to send UDP replies to */
-            udp_sender_available = 1;
             
             /* Send over TCP with length header */
             if (send_udp_over_tcp(tcp_fd, udp_buffer, udp_recv_len) < 0) {
@@ -293,26 +314,23 @@ int main(int argc, char *argv[]) {
             /* Process received TCP bytes */
             for (ssize_t i = 0; i < tcp_recv_len; i++) {
                 reconstruction_buffer[recon_index++] = tcp_buffer[i];
-                
-                if (in_header) {
+                // DBEUG
+                // printf("DEBUG T: %d\n", tcp_buffer[i]);
+                // printf("DBEUG S: %s\n", reconstruction_buffer[recon_index]);
+                if (in_header) { 
                     /* Still reading the 2-byte header */
                     if (recon_index == 2) {
                         /* Header complete, extract payload length */
                         uint16_t net_len;
-                        memcpy(&net_len, reconstruction_buffer, 2);
+                        memcpy(&net_len, reconstruction_buffer, 2); // uint16_t net_len = *(uint16_t *)reconstruction_buffer;
                         expected_payload_len = ntohs(net_len);
                         
                         if (expected_payload_len == 0) {
                             /* Empty message - send it out if we have a destination */
-                            if (udp_sender_available) {
-                                sendto(udp_fd, reconstruction_buffer + 2, 0, 0,
-                                       (struct sockaddr *)&udp_sender_addr,
-                                       sizeof(udp_sender_addr));
-                            }
+                            sendto(udp_fd, reconstruction_buffer + 2, 0, 0, (struct sockaddr *)&udp_sender_addr, sizeof(udp_sender_addr));
                             recon_index = 0;
                             in_header = 1;
                         } else {
-                            /* Switch to payload mode */
                             in_header = 0;
                         }
                     }
@@ -320,13 +338,7 @@ int main(int argc, char *argv[]) {
                     /* Reading payload */
                     if ((uint16_t)recon_index == 2 + expected_payload_len) {
                         /* Message complete */
-                        if (udp_sender_available) {
-                            sendto(udp_fd, reconstruction_buffer + 2, 
-                                   expected_payload_len, 0,
-                                   (struct sockaddr *)&udp_sender_addr,
-                                   sizeof(udp_sender_addr));
-                        }
-                        /* else: discard message as we don't have a destination yet */
+                        sendto(udp_fd, reconstruction_buffer + 2, expected_payload_len, 0, (struct sockaddr *)&udp_sender_addr, sizeof(udp_sender_addr));
                         
                         /* Reset for next message */
                         recon_index = 0;

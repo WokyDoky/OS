@@ -76,7 +76,15 @@ int better_write(int fd, const void *buf, size_t size) {
   return 0;
 }
 
-/* Create and bind TCP listening socket */
+/**
+ * @brief Creates, configures, and binds a TCP listening socket.
+ * @details This function creates an AF_INET, SOCK_STREAM socket, sets the
+ * SO_REUSEADDR option to allow quick server restarts, and binds it
+ * to all available interfaces (INADDR_ANY) on the specified port.
+ * It does not call listen().
+ * @param port The port number (in host byte order) to bind the socket to.
+ * @return The file descriptor for the bound socket on success, or -1 on failure.
+ */
 static int create_tcp_listen_socket(uint16_t port) {
     int sockfd;
     struct sockaddr_in server_addr;
@@ -109,7 +117,18 @@ static int create_tcp_listen_socket(uint16_t port) {
     return sockfd;
 }
 
-/* Create UDP socket and connect to server */
+/**
+ * @brief Resolves a server address, creates a UDP socket, and connects to it.
+ * @details This function uses getaddrinfo to resolve the server and port
+ * for a UDP (SOCK_DGRAM) socket. It then creates the socket and
+ * "connects" it to the server's address.
+ * @param server_name The hostname or IP address of the UDP server.
+ * @param port_name The port number or service name of the UDP server.
+ * @param result_out [out] A pointer to a struct addrinfo pointer. On success,
+ * this will be populated with the address info used,
+ * which must be freed by the caller using freeaddrinfo().
+ * @return The file descriptor for the connected UDP socket on success, or -1 on failure.
+ */
 static int create_udp_socket(const char *server_name, const char *port_name, struct addrinfo **result_out) {
     struct addrinfo hints;
     struct addrinfo *result;
@@ -146,7 +165,17 @@ static int create_udp_socket(const char *server_name, const char *port_name, str
     return sockfd;
 }
 
-/* Process UDP reception and send over TCP */
+/**
+ * @brief Reads one UDP datagram, frames it, and sends it over a TCP connection.
+ * @details This function reads a single packet from the UDP socket. It then
+ * prepends a 2-byte length header (in network byte order) to the
+ * packet's payload. This new framed message (2-byte length + payload)
+ * is then reliably sent over the TCP socket using better_write().
+ * @param udp_fd The file descriptor for the (connected) UDP socket to read from.
+ * @param tcp_fd The file descriptor for the TCP socket to write to.
+ * @return 0 on success, -1 on failure (e.g., read or write error).
+ * Returns 0 on EINTR during recv.
+ */
 static int process_udp_to_tcp(int udp_fd, int tcp_fd) {
     unsigned char udp_buffer[UDP_RECV_BUFFER_SIZE];
     unsigned char message[UDP_RECV_BUFFER_SIZE + 2];
@@ -178,7 +207,24 @@ static int process_udp_to_tcp(int udp_fd, int tcp_fd) {
     return 0;
 }
 
-/* Process TCP reception, reconstruct messages, and send over UDP */
+/**
+ * @brief Reads from a TCP stream, reconstructs framed messages, and sends them over UDP.
+ * @param tcp_fd The file descriptor for the TCP socket to read from.
+ * @param udp_fd The file descriptor for the (connected) UDP socket to send to.
+ * @param reconstruction_buffer [in/out] A buffer used to store partial
+ * messages between TCP reads.
+ * @param recon_index [in/out] A pointer to the current write position
+ * in the reconstruction buffer.
+ * @param expected_payload_length [in/out] A pointer to a variable storing
+ * the expected payload length of the
+ * current message being parsed.
+ * @param in_header_mode [in/out] A pointer to a flag (1 or 0) indicating
+ * if the state machine is currently parsing a
+ * header (1) or a payload (0).
+ * @return 0 on success (data processed, more expected),
+ * 1 on EOF (connection closed by peer),
+ * -1 on a fatal error.
+ */
 static int process_tcp_to_udp(int tcp_fd, int udp_fd, unsigned char *reconstruction_buffer, size_t *recon_index, uint16_t *expected_payload_length, int *in_header_mode) {
     unsigned char tcp_buffer[TCP_RECV_BUFFER_SIZE];
     ssize_t tcp_bytes;

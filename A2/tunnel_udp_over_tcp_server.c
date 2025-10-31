@@ -225,7 +225,7 @@ static int process_udp_to_tcp(int udp_fd, int tcp_fd) {
  * 1 on EOF (connection closed by peer),
  * -1 on a fatal error.
  */
-static int process_tcp_to_udp(int tcp_fd, int udp_fd, unsigned char *reconstruction_buffer, size_t *recon_index, uint16_t *expected_payload_length, int *in_header_mode) {
+static int process_tcp_to_udp(int tcp_fd, int udp_fd, unsigned char *reconstruction_buffer, size_t *recon_index, uint16_t *expected_payload_length, int *in_header) {
     unsigned char tcp_buffer[TCP_RECV_BUFFER_SIZE];
     ssize_t tcp_bytes;
     size_t i;
@@ -249,7 +249,7 @@ static int process_tcp_to_udp(int tcp_fd, int udp_fd, unsigned char *reconstruct
         reconstruction_buffer[*recon_index] = tcp_buffer[i];
         (*recon_index)++;
         
-        if (*in_header_mode) {
+        if (*in_header) {
             /* We're still reading the 2-byte header */
             if (*recon_index == 2) {
                 /* Header complete, extract length */
@@ -264,10 +264,10 @@ static int process_tcp_to_udp(int tcp_fd, int udp_fd, unsigned char *reconstruct
                         return -1;
                     }
                     *recon_index = 0;
-                    *in_header_mode = 1;
+                    *in_header = 1;
                 } else {
                     /* Switch to payload mode */
-                    *in_header_mode = 0;
+                    *in_header = 0;
                 }
             }
         } else {
@@ -281,7 +281,7 @@ static int process_tcp_to_udp(int tcp_fd, int udp_fd, unsigned char *reconstruct
                 
                 /* Reset for next message */
                 *recon_index = 0;
-                *in_header_mode = 1;
+                *in_header = 1;
                 *expected_payload_length = 0;
             }
         }

@@ -49,10 +49,8 @@ typedef struct {
     /* Sockets */
     int regular_udp_fd;
     int fec_udp_fd;
-
-    /* MODIFICATION: Renamed booleans */
-    int have_regular_peer_addr;
-    int have_fec_peer_addr;
+    int regular_connected;
+    int fec_connected;
     
     /* Configuration */
     int repetition_factor;
@@ -71,11 +69,7 @@ typedef struct {
     struct sockaddr_storage regular_peer_addr;
     socklen_t regular_peer_addr_len;
     
-    /* MODIFICATION: Added address storage for FEC UDP peer */
-    struct sockaddr_storage fec_peer_addr;
-    socklen_t fec_peer_addr_len;
-
-    /* FEC peer address info (for client/server mode) */
+    /* FEC peer address info (for server mode) */
     struct addrinfo *fec_peer_addrinfo;
 } udp_fec_state_t;
 
@@ -118,7 +112,7 @@ int better_write(int fd, const void *buf, size_t size) {
   return 0;
 }
 /**
- * @return length of str. 
+ *  @return length of str. 
 */
 int str_len(const char *str) {
     int length = 0;
@@ -245,7 +239,7 @@ static int create_udp_socket(uint16_t port) {
     return sockfd;
 }
 
-/* Create UDP socket and get address info (DOES NOT CONNECT) */
+/* Create UDP socket and get address info for connection */
 static int create_udp_with_addrinfo(const char *server_name, const char *port_name,
                                     struct addrinfo **result_out) {
     struct addrinfo hints;
@@ -272,7 +266,12 @@ static int create_udp_with_addrinfo(const char *server_name, const char *port_na
         return -1;
     }
     
-    /* MODIFICATION: Removed the connect() call */
+    if (connect(sockfd, result->ai_addr, result->ai_addrlen) < 0) {
+        fprintf(stderr, "Error connecting UDP socket: %s\n", strerror(errno));
+        close(sockfd);
+        freeaddrinfo(result);
+        return -1;
+    }
     
     if (result_out) {
         *result_out = result;
@@ -332,7 +331,10 @@ static int queue_for_repetition(udp_fec_state_t *state,
 }
 
 /* Add packet to reorder queue (sorted by packet number) */
-static int queue_for_reordering(udp_fec_state_t *state, const unsigned char *data, size_t data_len, uint32_t packet_num) {
+static int queue_for_reordering(udp_fec_state_t *state,
+                               const unsigned char *data,
+                               size_t data_len,
+                               uint32_t packet_num) {
     reorder_packet_t *pkt = malloc(sizeof(reorder_packet_t));
     if (!pkt) {
         fprintf(stderr, "Error: malloc failed for reorder packet\n");
@@ -378,26 +380,8 @@ static void process_repetition_queue(udp_fec_state_t *state) {
     while (*curr) {
         if (timespec_compare(&now, &(*curr)->next_send_time) >= 0) {
             /* Time to send this repetition */
-            
-            /* MODIFICATION: Replace send() with sendto() logic */
-            ssize_t sent;
-            if (state->is_client) {
-                /* Client sends FEC to the server from args */
-                sent = sendto(state->fec_udp_fd, (*curr)->data, (*curr)->data_len, 0,
-                              state->fec_peer_addrinfo->ai_addr, 
-                              state->fec_peer_addrinfo->ai_addrlen);
-            } else {
-                /* Server sends FEC reply to the FEC client it heard from */
-                if (state->have_fec_peer_addr) {
-                    sent = sendto(state->fec_udp_fd, (*curr)->data, (*curr)->data_len, 0,
-                                  (struct sockaddr *)&state->fec_peer_addr, 
-                                  state->fec_peer_addr_len);
-                } else {
-                    sent = -1; /* Can't send, don't know where yet */
-                    errno = EDESTADDRREQ; 
-                }
-            }
-            
+            ssize_t sent = send(state->fec_udp_fd, (*curr)->data, 
+                               (*curr)->data_len, 0);
             if (sent < 0) {
                 fprintf(stderr, "Warning: send failed in repetition: %s\n", 
                        strerror(errno));
@@ -444,26 +428,8 @@ static void process_reorder_queue(udp_fec_state_t *state) {
         /* Always send the first packet if it timed out, or if we can send in order */
         /* For simplicity, we send packets in order from the front */
         if (timed_out || 1) {  /* Always send from front for now */
-            
-            /* MODIFICATION: Replace send() with sendto() logic */
-            ssize_t sent;
-            if (state->is_client) {
-                /* Client sends regular reply to the original sender */
-                if (state->have_regular_peer_addr) {
-                    sent = sendto(state->regular_udp_fd, pkt->data, pkt->data_len, 0,
-                                  (struct sockaddr *)&state->regular_peer_addr, 
-                                  state->regular_peer_addr_len);
-                } else {
-                    sent = -1; /* Can't send, don't know where yet */
-                    errno = EDESTADDRREQ; 
-                }
-            } else {
-                /* Server sends regular packet to the destination from args */
-                sent = sendto(state->regular_udp_fd, pkt->data, pkt->data_len, 0,
-                              state->fec_peer_addrinfo->ai_addr, 
-                              state->fec_peer_addrinfo->ai_addrlen);
-            }
-
+            ssize_t sent = send(state->regular_udp_fd, pkt->data, 
+                               pkt->data_len, 0);
             if (sent < 0) {
                 fprintf(stderr, "Warning: send failed in reorder: %s\n", 
                        strerror(errno));
@@ -501,11 +467,18 @@ static int handle_regular_udp_reception(udp_fec_state_t *state) {
         return -1;
     }
     
-    /* MODIFICATION: specifed in the final report*/
-    /* Always store/update the regular peer's address */
-    memcpy(&state->regular_peer_addr, &sender_addr, addr_len);
-    state->regular_peer_addr_len = addr_len;
-    state->have_regular_peer_addr = 1;
+    /* First packet received - connect to sender */
+    if (!state->regular_connected) {
+        if (connect(state->regular_udp_fd, 
+                   (struct sockaddr *)&sender_addr, addr_len) < 0) {
+            fprintf(stderr, "Warning: connect failed on regular UDP: %s\n", 
+                   strerror(errno));
+        } else {
+            memcpy(&state->regular_peer_addr, &sender_addr, addr_len);
+            state->regular_peer_addr_len = addr_len;
+            state->regular_connected = 1;
+        }
+    }
     
     /* Create FEC packet: 4 byte header + payload */
     uint32_t net_pkt_num = htonl(state->send_packet_num);
@@ -514,25 +487,7 @@ static int handle_regular_udp_reception(udp_fec_state_t *state) {
     size_t fec_len = n + 4;
     
     /* Send immediately */
-    /* MODIFICATION: Replace send() with sendto() logic */
-    ssize_t sent;
-    if (state->is_client) {
-        /* Client sends FEC to the server from args */
-        sent = sendto(state->fec_udp_fd, fec_buffer, fec_len, 0,
-                      state->fec_peer_addrinfo->ai_addr, 
-                      state->fec_peer_addrinfo->ai_addrlen);
-    } else {
-        /* Server sends FEC reply to the FEC client it heard from */
-        if (state->have_fec_peer_addr) {
-            sent = sendto(state->fec_udp_fd, fec_buffer, fec_len, 0,
-                          (struct sockaddr *)&state->fec_peer_addr, 
-                          state->fec_peer_addr_len);
-        } else {
-            sent = -1; /* Can't send, don't know where yet */
-            errno = EDESTADDRREQ; 
-        }
-    }
-    
+    ssize_t sent = send(state->fec_udp_fd, fec_buffer, fec_len, 0);
     if (sent < 0) {
         fprintf(stderr, "Warning: send failed on FEC socket: %s\n", 
                strerror(errno));
@@ -572,12 +527,16 @@ static int handle_fec_udp_reception(udp_fec_state_t *state) {
         return 0;
     }
     
-    /* MODIFICATION: Removed connect() block */
-    /* Always store/update the FEC peer's address */
-    memcpy(&state->fec_peer_addr, &sender_addr, addr_len);
-    state->fec_peer_addr_len = addr_len;
-    state->have_fec_peer_addr = 1;
-
+    /* First packet received - connect to sender */
+    if (!state->fec_connected) {
+        if (connect(state->fec_udp_fd, 
+                   (struct sockaddr *)&sender_addr, addr_len) < 0) {
+            fprintf(stderr, "Warning: connect failed on FEC UDP: %s\n", 
+                   strerror(errno));
+        } else {
+            state->fec_connected = 1;
+        }
+    }
     
     /* Extract packet number from header */
     uint32_t net_pkt_num;
@@ -722,11 +681,8 @@ static void init_state(udp_fec_state_t *state) {
     memset(state, 0, sizeof(udp_fec_state_t));
     state->regular_udp_fd = -1;
     state->fec_udp_fd = -1;
-    
-    /* MODIFICATION: Use new names */
-    state->have_regular_peer_addr = 0;
-    state->have_fec_peer_addr = 0;
-
+    state->regular_connected = 0;
+    state->fec_connected = 0;
     state->send_packet_num = 0;
     state->rep_queue_head = NULL;
     state->reorder_queue_head = NULL;
@@ -859,38 +815,35 @@ int main(int argc, char *argv[]) {
     
     /* Setup sockets based on mode */
     if (is_client) {
-        /* Client mode: bind regular UDP port, get FEC server info */
+        /* Client mode: bind regular UDP port, connect to FEC server */
         state.regular_udp_fd = create_udp_socket(bind_port);
         if (state.regular_udp_fd < 0) {
             cleanup_state(&state);
             return 1;
         }
         
-        /* MODIFICATION: Get addrinfo for FEC server */
-        state.fec_udp_fd = create_udp_with_addrinfo(peer_name, peer_port, 
-                                                    &state.fec_peer_addrinfo);
+        state.fec_udp_fd = create_udp_with_addrinfo(peer_name, peer_port, NULL);
         if (state.fec_udp_fd < 0) {
             cleanup_state(&state);
             return 1;
         }
-        /* MODIFICATION: Removed state.fec_connected = 1; */
+        state.fec_connected = 1; /* Already connected via create_udp_with_addrinfo */
         
     } else {
-        /* Server mode: bind FEC UDP port, get regular UDP server info */
+        /* Server mode: bind FEC UDP port, connect to regular UDP server */
         state.fec_udp_fd = create_udp_socket(bind_port);
         if (state.fec_udp_fd < 0) {
             cleanup_state(&state);
             return 1;
         }
         
-        /* MODIFICATION: Get addrinfo for regular server */
         state.regular_udp_fd = create_udp_with_addrinfo(peer_name, peer_port, 
                                                         &state.fec_peer_addrinfo);
         if (state.regular_udp_fd < 0) {
             cleanup_state(&state);
             return 1;
         }
-        /* MODIFICATION: Removed state.regular_connected = 1; */
+        state.regular_connected = 1; /* Already connected */
     }
     
     /* Run main loop */

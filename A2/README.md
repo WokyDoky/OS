@@ -12,7 +12,6 @@ This repository contains a complete suite of UDP and TCP networking programs dev
 - [Testing](#testing)
 - [Program Details](#program-details)
 - [Network Configuration](#network-configuration)
-- [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -28,12 +27,6 @@ This project consists of seven networking programs that progressively build upon
 6. **tunnel_udp_over_tcp_server** - Tunnel UDP packets over TCP (server side)
 7. **udp_fec** - Forward Error Correction for UDP
 
-These programs demonstrate:
-- UDP's unreliable, packet-oriented nature
-- TCP's reliable, stream-oriented nature
-- I/O multiplexing with `select()`
-- Protocol encapsulation and tunneling
-- Error correction through packet repetition and reordering
 
 ---
 
@@ -108,7 +101,7 @@ Implements Forward Error Correction for UDP through packet repetition and reorde
 ## Requirements
 
 ### Software Requirements
-- Linux operating system (tested on Ubuntu 24)
+- Linux operating system (tested on Arch)
 - GCC compiler with C99 support
 - Standard C library and POSIX headers
 
@@ -139,7 +132,7 @@ gcc -Wall -Wextra -O2 -o tunnel_udp_over_tcp_server tunnel_udp_over_tcp_server.c
 gcc -Wall -Wextra -O2 -o udp_fec udp_fec.c
 
 # Or compile all at once
-make all  # if Makefile is provided
+make
 ```
 
 **Compiler flags explained:**
@@ -232,7 +225,7 @@ echo "test" | ./send_udp localhost 8000
 # Terminal 1: Start echo server
 ./reply_udp 8000
 
-# Terminal 2: Interactive bidirectional communication
+# Terminal 2: Start receiver
 ./send_receive_udp localhost 8000
 # Type messages, press Enter, see echoed responses
 # Press Ctrl+D to send EOF and terminate
@@ -562,74 +555,6 @@ dd if=/dev/urandom of=test10mb.bin bs=1M count=10
 time cat test10mb.bin | ./send_receive_udp localhost 8000 > /dev/null
 ```
 
-#### Latency Test
-```bash
-# Terminal 1
-./reply_udp 8000
-
-# Terminal 2 - measure round-trip time
-echo "ping" | time ./send_receive_udp localhost 8000
-```
-
-### Reliability Tests
-
-#### Packet Loss Impact
-```bash
-# Test without FEC under 10% loss
-sudo tc qdisc add dev lo root netem loss 10%
-cat 1mb_file.bin | ./send_receive_udp localhost 8000 > no_fec.bin
-wc -c 1mb_file.bin no_fec.bin  # Compare sizes
-
-# Test with FEC under 10% loss
-# Setup FEC chain with rep=3
-cat 1mb_file.bin | ./send_receive_udp localhost 5000 > with_fec.bin
-wc -c 1mb_file.bin with_fec.bin  # Should be much closer
-
-sudo tc qdisc del dev lo root
-```
-
-#### Packet Reordering
-```bash
-# Simulate reordering (25% of packets delayed by 10ms)
-sudo tc qdisc add dev lo root netem delay 10ms reorder 25% 50%
-
-# Test UDP without protection
-cat test.txt | ./send_receive_udp localhost 8000 > reordered.txt
-# May arrive scrambled
-
-# Test with FEC (reordering_delay=200ms handles this)
-# Setup FEC chain
-cat test.txt | ./send_receive_udp localhost 5000 > ordered.txt
-# Should arrive in order
-
-sudo tc qdisc del dev lo root
-```
-
-### Network Simulation Commands
-
-```bash
-# Add 10% packet loss
-sudo tc qdisc add dev lo root netem loss 10%
-
-# Add 50ms delay
-sudo tc qdisc add dev lo root netem delay 50ms
-
-# Add delay variation (jitter)
-sudo tc qdisc add dev lo root netem delay 50ms 10ms
-
-# Packet reordering
-sudo tc qdisc add dev lo root netem delay 10ms reorder 25% 50%
-
-# Combined: loss + delay + reordering
-sudo tc qdisc add dev lo root netem loss 10% delay 30ms reorder 15% 50%
-
-# Remove all rules
-sudo tc qdisc del dev lo root
-
-# View current rules
-sudo tc qdisc show dev lo
-```
-
 ---
 
 ## Program Details
@@ -784,276 +709,9 @@ All programs support IPv4. The code uses `AF_INET` for IPv4 sockets.
 hints.ai_family = AF_INET;  // IPv4 only
 ```
 
-**Dual-stack implementation:**
-```c
-hints.ai_family = AF_INET6;  // IPv6, may support IPv4 via mapping
-```
-
-### Firewall Considerations
-
-**For local testing (localhost):**
-- No firewall issues
-- All ports accessible
-
-**For network testing:**
-- Ensure firewall allows UDP/TCP on required ports
-- UTEP network: `dandelion` accessible only from UTEP IPs
-
-**Check firewall status (Ubuntu):**
-```bash
-sudo ufw status
-```
-
-**Allow port if needed:**
-```bash
-sudo ufw allow 8000/udp
-sudo ufw allow 9000/tcp
-```
-
-### Network Interfaces
-
-**Loopback (lo):**
-- Interface: `lo`
-- Address: `127.0.0.1` (IPv4), `::1` (IPv6)
-- Use: "localhost" in commands
-- Perfect reliability (no loss, no reordering)
-
-**Ethernet/WiFi:**
-- Interface: `eth0`, `wlan0`, etc.
-- Address: Assigned by DHCP or static
-- Use: Actual IP address or hostname
-- Real-world conditions (loss, reordering possible)
-
-**Check interfaces:**
-```bash
-ip addr show
-ifconfig
-```
 
 ---
 
-## Troubleshooting
-
-### Common Issues
-
-#### "Address already in use" Error
-```
-Error binding socket: Address already in use
-```
-
-**Cause:** Port is already bound by another process
-
-**Solution:**
-```bash
-# Find process using port
-lsof -i :8000
-netstat -tuln | grep 8000
-
-# Kill process if needed
-kill -9 <PID>
-
-# Or use different port
-./receive_udp 8001
-```
-
-#### "Connection refused" Error
-```
-connect error: Connection refused
-```
-
-**Cause:** No server listening on specified port
-
-**Solution:**
-- Ensure server program is running first
-- Check server is listening on correct port
-- Verify hostname/IP address is correct
-
-#### "Permission denied" Error (Ports < 1024)
-```
-Error binding socket: Permission denied
-```
-
-**Cause:** Ports below 1024 require root privileges
-
-**Solution:**
-```bash
-# Use sudo (not recommended for testing)
-sudo ./receive_udp 80
-
-# Better: Use port >= 1024
-./receive_udp 8000
-```
-
-#### Packets Not Arriving / Incomplete Data
-
-**Possible causes:**
-1. Network packet loss (expected with UDP)
-2. Firewall blocking traffic
-3. Incorrect address/port
-4. Server not running
-
-**Debugging steps:**
-```bash
-# 1. Test on localhost first
-./receive_udp 8000 &
-echo "test" | ./send_udp localhost 8000
-
-# 2. Check if programs are running
-ps aux | grep udp
-
-# 3. Monitor traffic with tcpdump
-sudo tcpdump -i lo 'port 8000'
-
-# 4. Try with TCP tunnel (should have 100% reliability)
-```
-
-#### Program Hangs / Doesn't Terminate
-
-**Possible causes:**
-1. Waiting for empty packet that never arrives (receive_udp, send_receive_udp)
-2. Waiting for stdin input
-3. Deadlock in select() loop
-
-**Solutions:**
-```bash
-# Send EOF on stdin
-# Press Ctrl+D
-
-# Or kill program
-killall receive_udp
-
-# For proper termination, send empty packet
-echo -n "" | ./send_udp localhost 8000
-```
-
-#### FEC Program Issues
-
-**"Invalid argument" or Parameter Errors**
-
-**Cause:** Arguments out of range
-
-**Check:**
-- Repetition factor: Must be 0-7
-- Repetition delay: Must be 0-1000 (ms)
-- Reordering delay: Must be 0-8000 (ms)
-- Port: Must be 0-65535
-
-**Memory Issues (Segmentation Fault)**
-
-**Cause:** Possible memory corruption in queue management
-
-**Debug:**
-```bash
-# Run with valgrind
-valgrind ./udp_fec -c 5000 localhost 6000 3 50 200
-
-# Check for memory leaks
-valgrind --leak-check=full ./udp_fec ...
-```
-
-### Debugging Tools
-
-#### tcpdump - Packet Capture
-```bash
-# Capture UDP on specific port
-sudo tcpdump -i lo 'udp port 8000' -X
-
-# Capture both UDP and TCP
-sudo tcpdump -i lo 'port 8000 or port 9000' -X
-
-# Save to file for analysis
-sudo tcpdump -i lo 'port 8000' -w capture.pcap
-
-# Read from file
-tcpdump -r capture.pcap -X
-```
-
-#### netstat - Network Status
-```bash
-# Show all listening ports
-netstat -tuln
-
-# Show processes using ports
-netstat -tulnp
-
-# Show specific port
-netstat -tuln | grep 8000
-```
-
-#### lsof - List Open Files (including sockets)
-```bash
-# Show all network connections
-lsof -i
-
-# Show specific port usage
-lsof -i :8000
-
-# Show by program
-lsof -i | grep send_udp
-```
-
-#### strace - System Call Tracing
-```bash
-# Trace system calls
-strace ./send_udp localhost 8000
-
-# Trace specific calls (e.g., network)
-strace -e trace=network ./receive_udp 8000
-
-# Save to file
-strace -o trace.log ./send_receive_udp localhost 8000
-```
-
-#### valgrind - Memory Analysis
-```bash
-# Check for memory leaks
-valgrind --leak-check=full ./udp_fec -c 5000 localhost 6000 3 50 200
-
-# Memory profiling
-valgrind --tool=massif ./program args
-ms_print massif.out.*
-```
-
----
-
-## Expected Behavior Summary
-
-### send_udp + receive_udp
-- **Localhost:** ~100% reliability, fast
-- **LAN:** >99% reliability, very low loss
-- **WAN:** 85-95% reliability, noticeable loss and reordering
-- **Use case:** Understanding UDP's unreliable nature
-
-### send_receive_udp + reply_udp
-- **Behavior:** Bidirectional echo test
-- **Latency:** 0.1-2ms (localhost), 10-50ms (LAN)
-- **Loss:** Same as send_udp/receive_udp
-- **Use case:** Testing round-trip communication
-
-### Tunnel Chain
-- **Reliability:** 100% (TCP guarantees)
-- **Ordering:** Perfect (TCP guarantees)
-- **Latency:** +30-50% compared to direct UDP
-- **Use case:** Reliable UDP over unreliable link, firewall bypass
-
-### FEC Chain
-- **Reliability:** 95-99.99% depending on repetition factor
-- **Ordering:** Excellent with proper reordering delay
-- **Bandwidth:** 2x-8x original (depending on repetition factor)
-- **Latency:** +50-350ms (depending on repetition delay and factor)
-- **Use case:** Real-time applications needing reliability without TCP's latency
-
-### Performance Characteristics
-
-| Configuration | Throughput | Latency | Reliability | Bandwidth Usage |
-|---------------|------------|---------|-------------|-----------------|
-| Direct UDP | High | Lowest | Low (WAN) | 1x |
-| UDP Tunnel | Medium | Low | Perfect | 1x + TCP overhead |
-| FEC (rep=1) | Medium | Low-Med | High | 2x |
-| FEC (rep=3) | Low-Med | Medium | Very High | 4x |
-| FEC (rep=7) | Low | High | Extreme | 8x |
-
----
 
 ## Additional Notes
 
@@ -1094,18 +752,6 @@ All programs properly clean up:
 - Free dynamically allocated memory with `free()`
 - Free getaddrinfo results with `freeaddrinfo()`
 
-### Testing Checklist
-
-Before considering a program complete:
-- [ ] Compiles without warnings (`-Wall -Wextra`)
-- [ ] Handles all error conditions gracefully
-- [ ] Validates all command-line arguments
-- [ ] Works on localhost
-- [ ] Works on LAN (if applicable)
-- [ ] No memory leaks (verified with valgrind)
-- [ ] Proper resource cleanup (no fd leaks)
-- [ ] Tested under adverse conditions (packet loss, reordering)
-
 ---
 
 ## References
@@ -1129,26 +775,6 @@ man 7 udp         # UDP protocol
 man 7 tcp         # TCP protocol
 ```
 
-### Useful Network Commands
-
-```bash
-# Network configuration
-ip addr                    # Show IP addresses
-ip route                   # Show routing table
-netstat -rn               # Show routing table (alternative)
-
-# Port scanning
-nmap localhost            # Scan open ports
-
-# Network performance
-iperf3 -s                 # Start server
-iperf3 -c localhost       # Test throughput
-
-# DNS resolution
-nslookup hostname         # Resolve hostname
-dig hostname              # Detailed DNS query
-```
-
 ---
 
 ## License and Attribution
@@ -1159,7 +785,6 @@ This code was developed as part of CS4375 Operating Systems Concepts coursework 
 - Professor Dr. Christoph Lauter, UTEP
 - Functions: `better_write()`, `convert_port_name()`
 
-**Author:** [Student Name]  
 **Course:** CS4375 Operating Systems Concepts  
 **Semester:** Fall 2025  
 **Institution:** University of Texas at El Paso

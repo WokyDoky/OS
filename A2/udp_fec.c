@@ -445,7 +445,6 @@ static void process_reorder_queue(udp_fec_state_t *state) {
         /* For simplicity, we send packets in order from the front */
         if (timed_out || 1) {  /* Always send from front for now */
             
-            /* MODIFICATION: Replace send() with sendto() logic */
             ssize_t sent;
             if (state->is_client) {
                 /* Client sends regular reply to the original sender */

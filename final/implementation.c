@@ -42,6 +42,8 @@
 #include <stdio.h>
 #include <arpa/inet.h>
 
+/* Removed comments for readability */
+
 /* Helper types and functions */
 
 /* Reads exactly n bytes from fd. Returns 0 on success, -1 on error/EOF. */
